@@ -10,10 +10,10 @@ export const MANIFEST: Job[] = [
   // =======================================================
   // === PASTE YOUR 500 NAME/FILE OBJECTS HERE ===
   // =======================================================
-  { "name": "Xomquoca", "audioId": "xomquoca-001" },
-  { "name": "Nonqoba", "audioId": "nonqoba-002" },
-  { "name": "Ayanda", "audioId": "ayanda-003" },
-  { "name": "Buhle", "audioId": "buhle-004" },
+  { "name": "Cebo", "audioId": "cebo" },
+  { "name": "Nonqoba", "audioId": "nonqaba" },
+  { "name": "xolisa", "audioId": "xolisa" },
+  { "name": "Krige", "audioId": "krige" },
   // ... etc.
   // =======================================================
 ];
