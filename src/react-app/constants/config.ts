@@ -1,0 +1,13 @@
+export const config = {
+  audioBaseUrl: import.meta.env.VITE_AUDIO_BASE_URL || 'https://audio.example.com',
+  s3UploadUrl: import.meta.env.VITE_S3_UPLOAD_URL || 'https://uploads.example.com',
+  // When deployed to Cloudflare, use relative URL. For local dev, use localhost
+  workerBaseUrl: import.meta.env.DEV ? 'http://localhost:8787/api' : '/api',
+  clickSoundsBaseUrl: import.meta.env.VITE_CLICK_SOUNDS_BASE_URL || '/',
+} as const;
+
+export const clickOffsets = {
+  'x': 0.040, // 40ms
+  'c': 0.050, // 50ms
+  'q': 0.016  // 16ms
+} as const;

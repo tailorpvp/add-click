@@ -1,0 +1,29 @@
+name = "add-click"
+main = "./src/worker/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+upload_source_maps = true
+
+[assets]
+directory = "./dist/client"
+not_found_handling = "single-page-application"
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "DB"
+id = "eed8596c030840fab94ef424c77d06f9"
+preview_id = "3a51e7aaba4e4f5f8a1c02602dab35b7"
+
+[[kv_namespaces]]
+binding = "FLAGGED_DB"
+id = "ef1b2d2d5c644776b625c65b443d12b8"
+preview_id = "1e7502402d424755b7887470006e033d"
+
+# Environment Variables
+[vars]
+AUDIO_BASE_URL = "https://temp-public-bucket-d6aa00ea.s3.us-east-1.amazonaws.com/raw_clips_start/"
+S3_UPLOAD_URL = "https://temp-public-bucket-d6aa00ea.s3.us-east-1.amazonaws.com/processed_start/"

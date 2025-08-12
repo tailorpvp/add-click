@@ -1,20 +1,10 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import { Howl } from 'howler';
+import useStore from './store/useStore';
+import ProgressBar from './components/ProgressBar';
+import { clickOffsets } from './constants/config';
 import './App.css';
-
-interface ClickSound {
-  id: string;
-  type: string;
-  file: string;
-  position: number; // 0-1 normalized position along the base track
-  letter: string;
-  color: string;
-  duration: number; // seconds
-  enabled: boolean; // whether this click is enabled
-  wavesurfer?: WaveSurfer;
-  howl?: Howl;
-}
 
 function App() {
   const mainWaveformRef = useRef<HTMLDivElement>(null);
@@ -22,54 +12,67 @@ function App() {
   const timelineRef = useRef<HTMLDivElement>(null);
   const mainHowlRef = useRef<Howl | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0); // seconds
-  const [duration, setDuration] = useState(0); // seconds (base track)
-  const [isLoading, setIsLoading] = useState(true);
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportProgress, setExportProgress] = useState(0);
-  
-  // Dip effect states
-  const [dipAmount, setDipAmount] = useState(0.5); // 0-1, how much to reduce volume
-  const [dipWidth, setDipWidth] = useState(0.2); // seconds, width of the dip
   const dipVisualizationRef = useRef<HTMLCanvasElement>(null);
-
   const playheadRef = useRef<HTMLDivElement>(null);
   const startTimeRef = useRef<number>(0);
   const pausedAtRef = useRef<number>(0);
-
-  const word = 'Xomquoca';
-
-  // Click timing offsets (in seconds from start of click file)
-  const clickOffsets = {
-    'x': 0.040, // 40ms
-    'c': 0.050, // 50ms
-    'q': 0.016  // 16ms
-  };
-
-  const [clicks, setClicks] = useState<ClickSound[]>([
-    { id: 'click-x', type: 'x', file: '/x-click.wav', position: 0.1, letter: 'X', color: '#c084fc', duration: 0.1, enabled: true },
-    { id: 'click-q', type: 'q', file: '/q-click.wav', position: 0.2, letter: 'Q', color: '#f472b6', duration: 0.1, enabled: true },
-    { id: 'click-c', type: 'c', file: '/c-click.wav', position: 0.3, letter: 'C', color: '#34d399', duration: 0.1, enabled: true },
-  ]);
-  const [clickTrackEnabled, setClickTrackEnabled] = useState(true);
   const clickWaveformRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const clickHowlsRef = useRef<Map<string, Howl>>(new Map());
 
-  // Load main audio with Howler
+  const {
+    currentJob,
+    progress,
+    isLoading,
+    error,
+    audioUrl,
+    duration,
+    isPlaying,
+    currentTime,
+    clicks,
+    clickTrackEnabled,
+    dipAmount,
+    dipWidth,
+    isExporting,
+    exportProgress,
+    fetchNextJob,
+    completeAndNext,
+    uploadToS3,
+    setIsPlaying,
+    setCurrentTime,
+    setDuration,
+    updateClick,
+    toggleClick,
+    setClickTrackEnabled,
+    setDipAmount,
+    setDipWidth,
+    setIsExporting,
+    setExportProgress,
+  } = useStore();
+
+  // Fetch first job on mount
   useEffect(() => {
-    setIsLoading(true);
+    fetchNextJob();
+  }, []);
+
+  // Load main audio when audioUrl changes
+  useEffect(() => {
+    if (!audioUrl) return;
+
+    // Clean up previous audio
+    if (mainHowlRef.current) {
+      mainHowlRef.current.unload();
+    }
     
-    // Load main audio
+    // Load new audio
     const mainHowl = new Howl({
-      src: ['/Xomquoca.wav'],
+      src: [audioUrl],
       onload: () => {
         const dur = mainHowl.duration();
         setDuration(dur);
-        console.log('🎵 Main track loaded, duration:', dur.toFixed(3), 'seconds');
+        console.log('Main track loaded, duration:', dur.toFixed(3), 'seconds');
         
         // Load click sounds
-        loadClickSounds(dur);
+        loadClickSounds();
       },
       onend: () => {
         setIsPlaying(false);
@@ -80,41 +83,41 @@ function App() {
     
     mainHowlRef.current = mainHowl;
 
+    // Load waveform visualization
+    if (mainWavesurferRef.current) {
+      mainWavesurferRef.current.load(audioUrl);
+    }
+
     return () => {
       mainHowl.unload();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [audioUrl]);
 
-  const loadClickSounds = async (mainDuration: number) => {
+  const loadClickSounds = async () => {
+    // Clear previous click howls
+    clickHowlsRef.current.forEach(howl => howl.unload());
+    clickHowlsRef.current.clear();
+
     const loadPromises = clicks.map((click) => {
-      return new Promise<ClickSound>((resolve) => {
+      return new Promise<void>((resolve) => {
         const howl = new Howl({
           src: [click.file],
           onload: function() {
             const clickDuration = howl.duration();
-            console.log(`📦 ${click.letter} click loaded:`, {
-              duration: clickDuration.toFixed(3),
-              position: (click.position * 100).toFixed(1) + '%',
-              starts_at: (click.position * mainDuration).toFixed(3) + 's'
-            });
-            resolve({
-              ...click,
-              duration: clickDuration,
-              howl
-            });
+            updateClick(click.id, { duration: clickDuration });
+            clickHowlsRef.current.set(click.id, howl);
+            console.log(`${click.letter} click loaded: ${clickDuration.toFixed(3)}s`);
+            resolve();
           }
         });
       });
     });
 
-    const loadedClicks = await Promise.all(loadPromises);
-    setClicks(loadedClicks);
-    setIsLoading(false);
-    console.log('🎯 All audio loaded');
+    await Promise.all(loadPromises);
+    console.log('All click sounds loaded');
   };
 
-  // Initialize WaveSurfer for visual waveform only (base track)
+  // Initialize WaveSurfer for visual waveform
   useEffect(() => {
     if (!mainWaveformRef.current) return;
 
@@ -131,18 +134,21 @@ function App() {
     });
 
     mainWavesurferRef.current = wavesurfer;
-    wavesurfer.load('/Xomquoca.wav');
+    
+    if (audioUrl) {
+      wavesurfer.load(audioUrl);
+    }
 
     return () => {
       wavesurfer.destroy();
     };
   }, []);
 
-  // Create tiny waveforms inside click blocks (visual only)
+  // Create tiny waveforms for click blocks
   useEffect(() => {
     clicks.forEach((click) => {
       const container = clickWaveformRefs.current.get(click.id);
-      if (container && !click.wavesurfer) {
+      if (container) {
         container.innerHTML = '';
 
         const ws = WaveSurfer.create({
@@ -159,41 +165,25 @@ function App() {
         });
 
         ws.load(click.file);
-
-        setClicks((prev) =>
-          prev.map((c) => (c.id === click.id ? { ...c, wavesurfer: ws } : c))
-        );
       }
     });
+  }, [clicks]);
 
-    return () => {
-      clicks.forEach((click) => {
-        if (click.wavesurfer) click.wavesurfer.destroy();
-      });
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clicks.length]);
-
-  // Calculate volume dip based on current position
+  // Calculate volume dip
   const calculateDipVolume = useCallback((currentPos: number) => {
-    if (!clickTrackEnabled) return 1.0; // No dip if click track is disabled
+    if (!clickTrackEnabled) return 1.0;
     
-    let minDipFactor = 1.0; // Start with no dip
+    let minDipFactor = 1.0;
     
     clicks.forEach((click) => {
-      if (!click.enabled) return; // Skip disabled clicks
+      if (!click.enabled) return;
       
       const clickType = click.type as keyof typeof clickOffsets;
       const clickActualTime = click.position * duration + clickOffsets[clickType];
       const halfWidth = dipWidth / 2;
       
-      // Check if we're within the dip range of this click
       if (currentPos >= clickActualTime - halfWidth && currentPos <= clickActualTime + halfWidth) {
-        // Calculate distance from click center (0 to 1)
         const distance = Math.abs(currentPos - clickActualTime) / halfWidth;
-        // Smooth cosine curve for the dip (using cosine for smooth fade)
-        // At distance=0 (center), cos(0)=1, so (1+cos(0))/2 = 1 (full dip)
-        // At distance=1 (edge), cos(π)=-1, so (1+cos(π))/2 = 0 (no dip)
         const smoothedDip = (1 + Math.cos(Math.PI * distance)) / 2;
         const dipFactor = 1 - (dipAmount * smoothedDip);
         minDipFactor = Math.min(minDipFactor, dipFactor);
@@ -203,7 +193,7 @@ function App() {
     return minDipFactor;
   }, [clicks, duration, dipAmount, dipWidth, clickTrackEnabled]);
 
-  // Update playhead and check for click triggers
+  // Update playback
   const updatePlayback = useCallback(() => {
     if (!isPlaying || !mainHowlRef.current) return;
 
@@ -230,36 +220,30 @@ function App() {
     // Check if we need to trigger any clicks
     if (clickTrackEnabled) {
       clicks.forEach((click) => {
-        if (click.howl && click.enabled) {
+        const howl = clickHowlsRef.current.get(click.id);
+        if (howl && click.enabled) {
           const clickStartTime = click.position * duration;
           const clickEndTime = clickStartTime + click.duration;
           
-          // Check if this click should be playing
           if (currentPos >= clickStartTime && currentPos < clickEndTime) {
-            // Check if it's already playing
-            if (!click.howl.playing()) {
-              // Calculate offset into the click sound
+            if (!howl.playing()) {
               const offset = currentPos - clickStartTime;
-              click.howl.seek(offset);
-              click.howl.play();
-              console.log(`▶️ Playing ${click.letter} click at ${currentPos.toFixed(3)}s (offset: ${offset.toFixed(3)}s)`);
+              howl.seek(offset);
+              howl.play();
             }
-          } else if (click.howl.playing() && currentPos >= clickEndTime) {
-            // Stop if we've passed the end
-            click.howl.stop();
+          } else if (howl.playing() && currentPos >= clickEndTime) {
+            howl.stop();
           }
         }
       });
     }
 
-    // Continue animation if still playing
     if (currentPos < duration) {
       animationFrameRef.current = requestAnimationFrame(updatePlayback);
     } else {
-      // Reached end
       handleStop();
     }
-  }, [isPlaying, duration, clicks, calculateDipVolume]);
+  }, [isPlaying, duration, clicks, calculateDipVolume, clickTrackEnabled]);
 
   useEffect(() => {
     if (isPlaying) {
@@ -280,35 +264,28 @@ function App() {
     if (!mainHowl) return;
 
     if (isPlaying) {
-      console.log('⏸️ Pausing playback');
       mainHowl.pause();
       pausedAtRef.current = currentTime;
       
-      // Pause all click sounds
-      clicks.forEach(c => c.howl?.pause());
+      clickHowlsRef.current.forEach(howl => howl.pause());
       
       setIsPlaying(false);
     } else {
       const startFrom = currentTime >= duration ? 0 : currentTime;
       
-      console.log('▶️ Starting playback from:', startFrom.toFixed(3), 'seconds');
-      
-      // Seek main audio to position
       mainHowl.seek(startFrom);
       mainHowl.play();
       
-      // Reset clicks that should be playing
       if (clickTrackEnabled) {
         clicks.forEach(click => {
-          if (click.howl && click.enabled) {
-            click.howl.stop(); // Stop any playing clicks
+          const howl = clickHowlsRef.current.get(click.id);
+          if (howl && click.enabled) {
+            howl.stop();
             const clickStart = click.position * duration;
             if (startFrom >= clickStart && startFrom < clickStart + click.duration) {
-              // This click should be playing
               const offset = startFrom - clickStart;
-              click.howl.seek(offset);
-              click.howl.play();
-              console.log(`▶️ Resuming ${click.letter} click with offset ${offset.toFixed(3)}s`);
+              howl.seek(offset);
+              howl.play();
             }
           }
         });
@@ -318,14 +295,12 @@ function App() {
       pausedAtRef.current = startFrom;
       setIsPlaying(true);
     }
-  }, [isPlaying, currentTime, duration, clicks]);
+  }, [isPlaying, currentTime, duration, clicks, clickTrackEnabled]);
 
   const handleStop = useCallback(() => {
-    console.log('⏹️ Stopping playback');
-    
     mainHowlRef.current?.stop();
-    mainHowlRef.current?.volume(1); // Reset volume
-    clicks.forEach(c => c.howl?.stop());
+    mainHowlRef.current?.volume(1);
+    clickHowlsRef.current.forEach(howl => howl.stop());
     
     setCurrentTime(0);
     setIsPlaying(false);
@@ -333,13 +308,12 @@ function App() {
     
     if (playheadRef.current) playheadRef.current.style.left = '0px';
     if (mainWavesurferRef.current) mainWavesurferRef.current.seekTo(0);
-  }, [clicks]);
+  }, []);
 
   const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const tl = timelineRef.current;
     if (!tl || !mainHowlRef.current) return;
 
-    // Avoid seeking when dragging click blocks
     const target = e.target as HTMLElement;
     if (target.closest('[id^="click-"]')) return;
 
@@ -347,18 +321,14 @@ function App() {
     const x = e.clientX - rect.left;
     const progress = Math.max(0, Math.min(1, x / rect.width));
     const newTime = progress * duration;
-    
-    console.log('🎯 Seeking to:', newTime.toFixed(3), 'seconds');
 
-    // If playing, pause first
     const wasPlaying = isPlaying;
     if (wasPlaying) {
       mainHowlRef.current.pause();
-      clicks.forEach(c => c.howl?.stop());
+      clickHowlsRef.current.forEach(howl => howl.stop());
       setIsPlaying(false);
     }
 
-    // Update position
     setCurrentTime(newTime);
     pausedAtRef.current = newTime;
     
@@ -370,44 +340,12 @@ function App() {
       playheadRef.current.style.left = `${x}px`;
     }
 
-    // Resume if was playing
     if (wasPlaying) {
       setTimeout(() => handlePlayPause(), 50);
     }
   };
 
-  const handleScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newTime = parseFloat(e.target.value);
-    console.log(`🎚️ Scrubbing to ${newTime.toFixed(3)}s`);
-    
-    const wasPlaying = isPlaying;
-    if (wasPlaying) {
-      mainHowlRef.current?.pause();
-      clicks.forEach(c => c.howl?.stop());
-      setIsPlaying(false);
-    }
-    
-    setCurrentTime(newTime);
-    pausedAtRef.current = newTime;
-    
-    if (mainWavesurferRef.current && duration > 0) {
-      mainWavesurferRef.current.seekTo(newTime / duration);
-    }
-    
-    if (wasPlaying) {
-      setTimeout(() => handlePlayPause(), 50);
-    }
-  };
-
-  // Toggle individual click
-  const toggleClick = (clickId: string) => {
-    setClicks(prev => prev.map(c => 
-      c.id === clickId ? { ...c, enabled: !c.enabled } : c
-    ));
-  };
-
-  // Drag a click block
-  const handleDragClick = (click: ClickSound, e: React.MouseEvent<HTMLDivElement>) => {
+  const handleDragClick = (click: any, e: React.MouseEvent<HTMLDivElement>) => {
     e.stopPropagation();
     const element = e.currentTarget as HTMLElement;
 
@@ -434,18 +372,7 @@ function App() {
         const deltaPercent = deltaX / timelineWidth;
         const newPosition = Math.max(0, Math.min(1, startPosition + deltaPercent));
 
-        setClicks((prev) =>
-          prev.map((c) => {
-            if (c.id !== click.id) return c;
-            
-            console.log(`🎵 ${c.letter} click repositioned:`, {
-              new_position: (newPosition * 100).toFixed(1) + '%',
-              time_in_seconds: (newPosition * duration).toFixed(3),
-            });
-            
-            return { ...c, position: newPosition };
-          })
-        );
+        updateClick(click.id, { position: newPosition });
       }
 
       document.removeEventListener('mousemove', handleMouseMove);
@@ -457,34 +384,24 @@ function App() {
   };
 
   const handleExport = async () => {
-    if (isExporting) return;
+    if (isExporting || !currentJob) return;
     
     setIsExporting(true);
     setExportProgress(0);
     
     try {
-      // Create audio context for mixing
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const sampleRate = audioContext.sampleRate;
-      
-      // Calculate total duration in samples
       const totalSamples = Math.ceil(duration * sampleRate);
-      
-      // Create output buffer (stereo)
       const outputBuffer = audioContext.createBuffer(2, totalSamples, sampleRate);
       const leftChannel = outputBuffer.getChannelData(0);
       const rightChannel = outputBuffer.getChannelData(1);
       
-      console.log('🎵 Starting audio export...');
-      console.log(`Duration: ${duration}s, Sample rate: ${sampleRate}Hz, Total samples: ${totalSamples}`);
-      
-      // Load and decode main audio
       setExportProgress(10);
-      const mainResponse = await fetch('/Xomquoca.wav');
+      const mainResponse = await fetch(audioUrl!);
       const mainArrayBuffer = await mainResponse.arrayBuffer();
       const mainBuffer = await audioContext.decodeAudioData(mainArrayBuffer);
       
-      // Copy main audio to output buffer with volume dips
       const mainLeft = mainBuffer.getChannelData(0);
       const mainRight = mainBuffer.numberOfChannels > 1 ? mainBuffer.getChannelData(1) : mainBuffer.getChannelData(0);
       
@@ -497,19 +414,16 @@ function App() {
       
       setExportProgress(40);
       
-      // Mix in click sounds if enabled
       if (clickTrackEnabled) {
         const clickPromises = clicks.filter(c => c.enabled).map(async (click, index) => {
           const response = await fetch(click.file);
           const arrayBuffer = await response.arrayBuffer();
           const clickBuffer = await audioContext.decodeAudioData(arrayBuffer);
           
-          // Calculate where to place this click
           const clickType = click.type as keyof typeof clickOffsets;
           const clickStartTime = click.position * duration + clickOffsets[clickType];
           const startSample = Math.floor(clickStartTime * sampleRate);
           
-          // Mix click into output buffer
           const clickLeft = clickBuffer.getChannelData(0);
           const clickRight = clickBuffer.numberOfChannels > 1 ? clickBuffer.getChannelData(1) : clickBuffer.getChannelData(0);
           
@@ -522,7 +436,6 @@ function App() {
           }
           
           setExportProgress(40 + (index + 1) * (40 / clicks.length));
-          console.log(`✅ Mixed ${click.letter} click at ${clickStartTime.toFixed(3)}s`);
         });
         
         await Promise.all(clickPromises);
@@ -530,7 +443,7 @@ function App() {
       
       setExportProgress(80);
       
-      // Normalize audio to prevent clipping
+      // Normalize audio
       let maxSample = 0;
       for (let i = 0; i < totalSamples; i++) {
         maxSample = Math.max(maxSample, Math.abs(leftChannel[i]), Math.abs(rightChannel[i]));
@@ -542,12 +455,10 @@ function App() {
           leftChannel[i] *= normalizeFactor;
           rightChannel[i] *= normalizeFactor;
         }
-        console.log(`🎚️ Normalized audio by factor: ${normalizeFactor.toFixed(3)}`);
       }
       
       setExportProgress(90);
       
-      // Convert buffer to WAV blob using RecordRTC
       const offlineContext = new OfflineAudioContext(2, totalSamples, sampleRate);
       const source = offlineContext.createBufferSource();
       source.buffer = outputBuffer;
@@ -555,33 +466,15 @@ function App() {
       source.start();
       
       const renderedBuffer = await offlineContext.startRendering();
-      
-      // Convert AudioBuffer to WAV blob
       const wavBlob = await audioBufferToWav(renderedBuffer);
+      
+      // Upload to S3
+      await uploadToS3(wavBlob, currentJob.audioId);
       
       setExportProgress(100);
       
-      // Create download link
-      const url = URL.createObjectURL(wavBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `xomquoca_mixed_${Date.now()}.wav`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      
-      console.log('✅ Export complete!');
-      
-      // Export click position data
-      const exportData = clicks.map((c) => ({
-        letter: c.letter,
-        position_seconds: Number((c.position * duration).toFixed(3)),
-        normalized_position: Number(c.position.toFixed(6)),
-        type: c.type,
-        enabled: c.enabled
-      }));
-      console.log('Click positions:', exportData);
+      // Mark as complete and get next
+      await completeAndNext();
       
     } catch (error) {
       console.error('Export failed:', error);
@@ -592,17 +485,14 @@ function App() {
     }
   };
   
-  // Helper function to convert AudioBuffer to WAV
   const audioBufferToWav = async (buffer: AudioBuffer): Promise<Blob> => {
     const numberOfChannels = buffer.numberOfChannels;
-    const length = buffer.length * numberOfChannels * 2; // 16-bit samples
+    const length = buffer.length * numberOfChannels * 2;
     const arrayBuffer = new ArrayBuffer(44 + length);
     const view = new DataView(arrayBuffer);
     const channels = [];
-    let offset = 0;
     let pos = 0;
     
-    // Write WAV header
     const setUint16 = (data: number) => {
       view.setUint16(pos, data, true);
       pos += 2;
@@ -612,35 +502,30 @@ function App() {
       pos += 4;
     };
     
-    // RIFF identifier
-    setUint32(0x46464952); // "RIFF"
-    setUint32(36 + length); // file length
-    setUint32(0x45564157); // "WAVE"
-    
-    // fmt sub-chunk
-    setUint32(0x20746d66); // "fmt "
-    setUint32(16); // subchunk size
-    setUint16(1); // PCM format
+    setUint32(0x46464952);
+    setUint32(36 + length);
+    setUint32(0x45564157);
+    setUint32(0x20746d66);
+    setUint32(16);
+    setUint16(1);
     setUint16(numberOfChannels);
     setUint32(buffer.sampleRate);
-    setUint32(buffer.sampleRate * numberOfChannels * 2); // byte rate
-    setUint16(numberOfChannels * 2); // block align
-    setUint16(16); // bits per sample
-    
-    // data sub-chunk
-    setUint32(0x61746164); // "data"
+    setUint32(buffer.sampleRate * numberOfChannels * 2);
+    setUint16(numberOfChannels * 2);
+    setUint16(16);
+    setUint32(0x61746164);
     setUint32(length);
     
-    // Write interleaved samples
     for (let i = 0; i < numberOfChannels; i++) {
       channels.push(buffer.getChannelData(i));
     }
     
+    let offset = 0;
     while (offset < buffer.length) {
       for (let i = 0; i < numberOfChannels; i++) {
         let sample = channels[i][offset];
-        sample = Math.max(-1, Math.min(1, sample)); // clamp
-        sample = sample * 0x7FFF; // convert to 16-bit
+        sample = Math.max(-1, Math.min(1, sample));
+        sample = sample * 0x7FFF;
         view.setInt16(pos, sample, true);
         pos += 2;
       }
@@ -666,15 +551,12 @@ function App() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Set canvas size to match timeline
     const rect = timeline.getBoundingClientRect();
     canvas.width = rect.width;
-    canvas.height = 64; // Match main track height
+    canvas.height = 64;
 
-    // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw dip curve
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -684,7 +566,7 @@ function App() {
       const x = i;
       const timePos = (i / samples) * duration;
       const dipFactor = calculateDipVolume(timePos);
-      const y = canvas.height - (dipFactor * canvas.height * 0.8) - 10; // Invert and scale
+      const y = canvas.height - (dipFactor * canvas.height * 0.8) - 10;
       
       if (i === 0) {
         ctx.moveTo(x, y);
@@ -695,7 +577,6 @@ function App() {
     
     ctx.stroke();
 
-    // Draw click markers
     if (clickTrackEnabled) {
       clicks.forEach((click) => {
         if (!click.enabled) return;
@@ -704,7 +585,6 @@ function App() {
         const clickActualTime = click.position * duration + clickOffsets[clickType];
         const x = (clickActualTime / duration) * canvas.width;
         
-        // Draw vertical line at click point
         ctx.strokeStyle = click.color;
         ctx.lineWidth = 1;
         ctx.setLineDash([2, 2]);
@@ -715,20 +595,7 @@ function App() {
         ctx.setLineDash([]);
       });
     }
-  }, [clicks, duration, dipAmount, dipWidth, calculateDipVolume]);
-
-  // Force re-render when timeline resizes to update click positions
-  useEffect(() => {
-    const tl = timelineRef.current;
-    if (!tl) return;
-
-    const ro = new ResizeObserver(() => {
-      setClicks((prev) => [...prev]); // force re-render to recalc pixel positions
-    });
-
-    ro.observe(tl);
-    return () => ro.disconnect();
-  }, []);
+  }, [clicks, duration, dipAmount, dipWidth, calculateDipVolume, clickTrackEnabled]);
 
   // Spacebar play/pause
   useEffect(() => {
@@ -742,6 +609,17 @@ function App() {
     return () => document.removeEventListener('keydown', handleKeyPress);
   }, [handlePlayPause]);
 
+  if (error) {
+    return (
+      <div className="app">
+        <div className="error-message">
+          {error}
+          <button onClick={fetchNextJob}>Try Again</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <div className="header">
@@ -753,36 +631,40 @@ function App() {
           <span>Xhosa Click Editor</span>
         </div>
         <div className="header-actions">
-          <button className="btn-secondary">Export</button>
+          <ProgressBar completed={progress.completed} total={progress.total} />
         </div>
       </div>
 
       <div className="main-content">
         {/* Transcript Section */}
         <div className="transcript-section">
-          <div className="transcript-header">Transcript</div>
-          <div className="word-info">
-            <div className="current-word">
-              <span className="click-marker" style={{ color: '#c084fc' }}>X</span>om
-              <span className="click-marker" style={{ color: '#f472b6' }}>q</span>uo
-              <span className="click-marker" style={{ color: '#34d399' }}>c</span>a
-            </div>
-            <div className="phonetic-display">[{word}]</div>
-          </div>
-          <div className="click-legend">
-            <div className="click-type">
-              <span className="click-dot" style={{ background: '#c084fc' }}></span>
-              <span>X - Lateral Click</span>
-            </div>
-            <div className="click-type">
-              <span className="click-dot" style={{ background: '#f472b6' }}></span>
-              <span>Q - Alveolar Click</span>
-            </div>
-            <div className="click-type">
-              <span className="click-dot" style={{ background: '#34d399' }}></span>
-              <span>C - Dental Click</span>
-            </div>
-          </div>
+          <div className="transcript-header">Current Word</div>
+          {currentJob && (
+            <>
+              <div className="word-info">
+                <div className="current-word">
+                  {currentJob.name.split('').map((char, i) => {
+                    const isClick = clicks.some(c => c.letter.toLowerCase() === char.toLowerCase());
+                    const clickColor = clicks.find(c => c.letter.toLowerCase() === char.toLowerCase())?.color;
+                    return isClick ? (
+                      <span key={i} className="click-marker" style={{ color: clickColor }}>{char}</span>
+                    ) : (
+                      <span key={i}>{char}</span>
+                    );
+                  })}
+                </div>
+                <div className="phonetic-display">[{currentJob.name}]</div>
+              </div>
+              <div className="click-legend">
+                {clicks.map(click => (
+                  <div key={click.id} className="click-type">
+                    <span className="click-dot" style={{ background: click.color }}></span>
+                    <span>{click.letter.toUpperCase()} - Click</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         <div className="editor-section">
@@ -824,51 +706,46 @@ function App() {
                 className="click-track"
                 onClick={handleTimelineClick}
               >
-              {clicks.map((click) => {
-                const timelineWidth = timelineRef.current?.clientWidth || 0;
-                // Position is where the click sound starts (absolute position on timeline)
-                const pixelLeft = click.position * timelineWidth;
-                // Calculate width based on actual click duration
-                const clickWidthPixels = duration > 0 
-                  ? Math.max(40, (click.duration / duration) * timelineWidth)
-                  : 60;
+                {clicks.map((click) => {
+                  const timelineWidth = timelineRef.current?.clientWidth || 0;
+                  const pixelLeft = click.position * timelineWidth;
+                  const clickWidthPixels = duration > 0 
+                    ? Math.max(40, (click.duration / duration) * timelineWidth)
+                    : 60;
 
-                return (
-                  <div
-                    key={click.id}
-                    id={click.id}
-                    className="click-block"
-                    style={{
-                      left: `${pixelLeft}px`,
-                      width: `${clickWidthPixels}px`,
-                      backgroundColor: click.color,
-                      opacity: click.enabled && clickTrackEnabled ? 1 : 0.3,
-                    }}
-                    onMouseDown={(e) => handleDragClick(click, e)}
-                  >
-                    {/* Waveform container */}
+                  return (
                     <div
-                      ref={(el) => {
-                        if (el) clickWaveformRefs.current.set(click.id, el);
+                      key={click.id}
+                      id={click.id}
+                      className="click-block"
+                      style={{
+                        left: `${pixelLeft}px`,
+                        width: `${clickWidthPixels}px`,
+                        backgroundColor: click.color,
+                        opacity: click.enabled && clickTrackEnabled ? 1 : 0.3,
                       }}
-                      className="click-waveform"
-                    />
-                    {/* Letter label */}
-                    <div className="click-label">
-                      {click.letter}
+                      onMouseDown={(e) => handleDragClick(click, e)}
+                    >
+                      <div
+                        ref={(el) => {
+                          if (el) clickWaveformRefs.current.set(click.id, el);
+                        }}
+                        className="click-waveform"
+                      />
+                      <div className="click-label">
+                        {click.letter}
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={click.enabled}
+                        onChange={() => toggleClick(click.id)}
+                        className="click-checkbox"
+                        onMouseDown={(e) => e.stopPropagation()}
+                      />
                     </div>
-                    {/* Enable/disable checkbox */}
-                    <input
-                      type="checkbox"
-                      checked={click.enabled}
-                      onChange={() => toggleClick(click.id)}
-                      className="click-checkbox"
-                      onMouseDown={(e) => e.stopPropagation()}
-                    />
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
 
               {/* Main Audio Track */}
               <div className="track-label">
@@ -886,7 +763,6 @@ function App() {
                     Loading waveform...
                   </div>
                 )}
-                {/* Dip visualization overlay */}
                 <canvas
                   ref={dipVisualizationRef}
                   style={{
@@ -965,48 +841,27 @@ function App() {
                 <span className="time-separator">/</span>
                 <span className="time-total">{formatTime(duration)}</span>
               </div>
-
-              <div className="scrubber-container">
-                <input
-                  type="range"
-                  min="0"
-                  max={duration || 0}
-                  value={Math.min(currentTime, duration || 0)}
-                  onChange={handleScrub}
-                  className="scrubber"
-                  step="0.01"
-                />
-              </div>
             </div>
           </div>
         </div>
 
         <div className="export-section">
           <div className="export-info">
-            {isExporting ? `Exporting... ${exportProgress}%` : 'Ready to export'}
+            {isExporting ? `Saving to S3... ${exportProgress}%` : 'Ready to save'}
           </div>
-          <button className="btn-primary" onClick={handleExport} disabled={isExporting || isLoading}>
+          <button 
+            className="btn-primary" 
+            onClick={handleExport} 
+            disabled={isExporting || isLoading || !currentJob}
+          >
             {isExporting ? (
               <>
-                <div className="spinner" style={{
-                  display: 'inline-block',
-                  width: '16px',
-                  height: '16px',
-                  border: '2px solid rgba(255,255,255,0.3)',
-                  borderTopColor: 'white',
-                  borderRadius: '50%',
-                  animation: 'spin 1s linear infinite',
-                  marginRight: '8px'
-                }} />
-                Exporting... {exportProgress}%
+                <div className="spinner" />
+                Saving... {exportProgress}%
               </>
             ) : (
               <>
-                <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
-                  <path d="M10 14L14 10H11V3H9V10H6L10 14Z" />
-                  <path d="M4 15V17H16V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-                Export Audio
+                Save & Next
               </>
             )}
           </button>

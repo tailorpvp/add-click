@@ -22,5 +22,6 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src/react-app"]
+  "include": ["src/react-app"],
+  "exclude": ["**/*.test.tsx", "**/*.test.ts", "**/test.tsx", "**/test.ts", "src/react-app/components/Avatar", "src/react-app/components/test.tsx"]
 }
