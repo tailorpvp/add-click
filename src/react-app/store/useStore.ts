@@ -232,7 +232,6 @@ const useStore = create<AppState>((set, get) => ({
       'x': { color: '#c084fc', file: `${config.clickSoundsBaseUrl}x-click.wav` },
       'q': { color: '#f472b6', file: `${config.clickSoundsBaseUrl}q-click.wav` },
       'c': { color: '#34d399', file: `${config.clickSoundsBaseUrl}c-click.wav` },
-      'g': { color: '#fbbf24', file: `${config.clickSoundsBaseUrl}g-click.wav` }, // Assuming you might have more
     };
     
     const newClicks: ClickSound[] = [];

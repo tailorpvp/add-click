@@ -1,7 +1,7 @@
 export const config = {
   // Hardcoded values since Cloudflare doesn't inject env vars at runtime
-  audioBaseUrl: 'https://temp-public-bucket-d6aa00ea.s3.us-east-1.amazonaws.com/raw_clips_start',
-  s3UploadUrl: 'https://temp-public-bucket-d6aa00ea.s3.us-east-1.amazonaws.com/processed_start',
+  audioBaseUrl: 'https://temp-public-bucket-d6aa00ea.s3.us-east-1.amazonaws.com/raw_clips_end',
+  s3UploadUrl: 'https://temp-public-bucket-d6aa00ea.s3.us-east-1.amazonaws.com/processed_end',
   // When deployed to Cloudflare, use relative URL. For local dev, use localhost
   workerBaseUrl: import.meta.env.DEV ? 'http://localhost:8787/api' : '/api',
   clickSoundsBaseUrl: '/',

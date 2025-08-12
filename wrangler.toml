@@ -26,5 +26,5 @@ preview_id = "1e7502402d424755b7887470006e033d"
 
 # Environment Variables
 [vars]
-AUDIO_BASE_URL = "https://temp-public-bucket-d6aa00ea.s3.us-east-1.amazonaws.com/raw_clips_start/"
-S3_UPLOAD_URL = "https://temp-public-bucket-d6aa00ea.s3.us-east-1.amazonaws.com/processed_start/"
+AUDIO_BASE_URL = "https://temp-public-bucket-d6aa00ea.s3.us-east-1.amazonaws.com/raw_clips_end/"
+S3_UPLOAD_URL = "https://temp-public-bucket-d6aa00ea.s3.us-east-1.amazonaws.com/processed_end/"
