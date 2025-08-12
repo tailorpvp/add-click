@@ -6,6 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 [observability]
 enabled = true
 
+# Source maps should be at top level, not under observability
 upload_source_maps = true
 
 [assets]
